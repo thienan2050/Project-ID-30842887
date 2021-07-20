@@ -252,6 +252,7 @@ void loop()
       StateMachine = ON;
       lastStateMachine = PRODUCE; // Dont care, just a garbage value. */
       configuration = true;
+      valveState = INIT;
     }
     if((digitalRead(NC_SWITCH) == HIGH)&&(flagNC_SWITCH == false))
       {
