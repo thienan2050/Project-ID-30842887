@@ -32,12 +32,16 @@
 */
 typedef enum { ON, OFF, PRODUCE, LOW_WATER } STATE;
 typedef enum { INIT, WAIT_FALLING, FULL, ON_ALARM, COMPLETE } VALVE_STATE;
+typedef enum { RIGHT, UP, DOWN, LEFT, SELECT, NOISE } BUTTON;
 int TIMER[3] = {SMALL, MEDIUM, LARGE};
 unsigned int timerCounterDown, lastTimerCounterDown = 432;  //Only 16bit, not 32 as in Linux
 STATE StateMachine, lastStateMachine;
 VALVE_STATE valveState = INIT;
-int pause, turnOffValve, currentState[7];
+int pause, turnOffValve, lastTurnOffValve, currentState[7], wait;
 bool flagValve = false, flagNC_SWITCH = false;
+int index = 0, lastIndex = 4;
+bool configuration = false;
+bool done = false;
 LiquidCrystal LCD(8, 9, 4, 5, 6, 7);        // Select the pins used on the LCD panel
 
 /* Timer interrupt handler. */
@@ -49,9 +53,13 @@ ISR(TIMER1_COMPA_vect){
   }
   if(turnOffValve != 0)
     turnOffValve--; 
+  if(wait != 0)
+  {
+    wait--;
+  }
 }
 
-int readKeyPad(void)
+BUTTON readKeyPad(void)
 {
   int value = analogRead(A0);
   if(value < 60)
@@ -60,6 +68,7 @@ int readKeyPad(void)
     if(analogRead(A0) > 900)
     {
       Serial.println("RIGHT");
+      return RIGHT;
     }
   }
   else if(value < 200)
@@ -68,7 +77,7 @@ int readKeyPad(void)
     if(analogRead(A0) > 900)
     {
       //Serial.println("UP");
-      return -1;
+      return UP;
     }
   }
   else if (value < 400)
@@ -77,7 +86,7 @@ int readKeyPad(void)
     if(analogRead(A0) > 900)
     {
       //Serial.println("DOWN");
-      return 1;
+      return DOWN;
     }
   }
   else if (value < 600)
@@ -86,6 +95,7 @@ int readKeyPad(void)
     if(analogRead(A0) > 900)
     {
       Serial.println("LEFT");
+      return LEFT;
     }
   }
   else if (value < 800)
@@ -93,11 +103,11 @@ int readKeyPad(void)
     delay(100);
     if(analogRead(A0) > 900)
     {
-      //Serial.println("SELECT");
-      return 2;
+      Serial.println("SELECT");
+      return SELECT;
     }
   }
-  return 0;
+  return NOISE;
 }
 
 char *getSizeByIndex(int index)
@@ -152,51 +162,97 @@ void setup()
     /* Configuration for button2 */
     pinMode(BUTTON2, INPUT);
     pinMode(NC_SWITCH, INPUT);
-    
-
 
     LCD.begin(16, 2);             // LCD 16x2
-    LCD.setCursor(4, 0);          // Colum 0, Row 0
-    Serial.println("WELCOME");    
-    LCD.print("WELCOME");
-    LCD.setCursor(0, 1);          // Colum 0, Row 1
-    Serial.println("PRESS SELECT BUTTON TO CONTINUE");
-    LCD.print("PRESS SELECT TO CONT");
-    while(readKeyPad() != 2);
-    LCD.clear();
-    LCD.setCursor(3, 0);
-    delay(500);
-    int index = 0, lastIndex = 4;
-    while(readKeyPad() != 2)
-    {
-      index = (index + readKeyPad()) % 3;
-      if(index == -2) index = 1;
-      if(index == -1) index = 2;
-      if(index != lastIndex)
-      {
-        LCD.clear();
-        LCD.setCursor(0, 0);
-        LCD.print(getSizeByIndex(index));
-      }
-      lastIndex = index;
-    }
-    
-    Serial.println("Choose size ");
-    Serial.println(TIMER[index]);
-    LCD.clear();
-    LCD.setCursor(0, 0);
-    LCD.print(getSizeByIndex(index));
-    LCD.setCursor(0, 1);
-    LCD.print("TIME = ");
-    LCD.setCursor(7, 1);
-    LCD.print(TIMER[index]);
-    timerCounterDown = TIMER[index];
-    StateMachine = ON;
-    lastStateMachine = PRODUCE; // Dont care, just a garbage value. */
 }
-
 void loop()
 {
+    if((readKeyPad() == SELECT)&&(configuration == true))
+    {
+      LCD.clear();
+      LCD.setCursor(0, 0);
+      LCD.print("RECONFIG SIZE ?");
+      LCD.setCursor(0, 1);
+      LCD.print("SELECT TO OK");
+      wait = 10;         // WAIT 10 TO RECORD A SECOND PRESS, IF TIME'S UP, RESUME
+      while((readKeyPad() != SELECT)&&(wait != 0));
+      if(wait == 0)
+      {
+        Serial.println("RESUME");
+        LCD.clear();
+        LCD.print("RESUME");
+        lastStateMachine = 10;
+      }
+      else if(wait > 0)
+      {
+        LCD.clear();
+        LCD.print("RECONFIGURE");
+        configuration = false;
+        digitalWrite(COMPRESSOR, LOW);
+        digitalWrite(VALVE, LOW);
+        digitalWrite(PUMP, LOW);
+        digitalWrite(VALVE, LOW);
+        delay(20);
+      }
+    }
+    while(configuration == false)
+    {
+      LCD.clear();
+      LCD.setCursor(4, 0);          // Colum 0, Row 0
+      Serial.println("WELCOME");    
+      LCD.print("WELCOME");
+      LCD.setCursor(0, 1);          // Colum 0, Row 1
+      Serial.println("PRESS SELECT BUTTON TO CONTINUE");
+      LCD.print("PRESS SELECT TO CONT");
+      while(readKeyPad() != SELECT);
+      LCD.clear();
+      LCD.setCursor(3, 0);
+      LCD.print(getSizeByIndex(index));
+      delay(500);
+      BUTTON temp;
+      done = false;
+      //while(readKeyPad() != SELECT)
+      while(!done)
+      {
+        temp = readKeyPad();
+        if(temp == DOWN)
+        {
+          index = (index + 1) % 3;
+          //Serial.println("DOWN");
+        }
+        else if(temp == UP)
+        {
+          index = (index - 1) % 3;
+          //Serial.println("UP");
+        }
+        if(index == -1) index = 2;
+        if(index == -2) index = 1;
+        if(index != lastIndex)
+        {
+          LCD.setCursor(7, 0);
+          LCD.print("       ");
+          LCD.setCursor(3, 0);
+          LCD.print(getSizeByIndex(index));
+          Serial.println(getSizeByIndex(index));
+        }
+        lastIndex = index;
+        if(temp == SELECT)
+          done = true;
+      }
+      Serial.println("Choose size ");
+      Serial.println(TIMER[index]);
+      LCD.clear();
+      LCD.setCursor(0, 0);
+      LCD.print(getSizeByIndex(index));
+      LCD.setCursor(0, 1);
+      LCD.print("TIME = ");
+      LCD.setCursor(7, 1);
+      LCD.print(TIMER[index]);
+      timerCounterDown = TIMER[index];
+      StateMachine = ON;
+      lastStateMachine = PRODUCE; // Dont care, just a garbage value. */
+      configuration = true;
+    }
     if((digitalRead(NC_SWITCH) == HIGH)&&(flagNC_SWITCH == false))
       {
         flagNC_SWITCH = true;
@@ -230,7 +286,6 @@ void loop()
       lastStateMachine = LOW_WATER;
       LCD.clear();                                    // Clear LCD.
       Serial.println("RESTORE THE CURRENT STATE");
-      
      }
 
 
@@ -271,6 +326,11 @@ void loop()
             
             //LCD.print("ICE FULL, EMPTY !"); //Show on LCD
             Serial.println("TIME'S UP, TURN ON ALARM, TURN OFF COMPRESSOR, PUMP AND VALVE"); 
+            LCD.clear();
+            LCD.setCursor(0, 0);
+            LCD.print("ICE FULL, REMOVE!");
+            LCD.setCursor(0, 1);
+            LCD.print("TURN OFF ALL");
             digitalWrite(VALVE, LOW);
             digitalWrite(COMPRESSOR, LOW);
             digitalWrite(PUMP, LOW);
@@ -283,13 +343,14 @@ void loop()
           Serial.println("YEAH! ICE HIT THE BUTTON2, WAIT 5S TO BE REMOVED");
           valveState = FULL;
           turnOffValve = DELAY;
+          lastTurnOffValve = 3;
         }
         
         else if((digitalRead(BUTTON2) == HIGH)&&(valveState == FULL))
         {
           valveState = INIT;
           StateMachine = ON;
-          timerCounterDown = DELAY;
+          timerCounterDown = TIMER[index];
           digitalWrite(VALVE, LOW);
           Serial.println("ICE WAS REMOVED WITHIN 5S, START NEW LOOP ");
         }
@@ -297,13 +358,10 @@ void loop()
         {
           valveState = INIT;
           StateMachine = ON;
-          timerCounterDown = DELAY;
+          timerCounterDown = TIMER[index];
           Serial.println("ICE WAS REMOVED, START NEW LOOP ");
           digitalWrite(ALARM, LOW);
         }
-        
-        
-
       }
       break;
       default: break;
@@ -365,7 +423,32 @@ void loop()
         if((digitalRead(VALVE) == LOW)&&(valveState == INIT))
         {
           Serial.println("TURN ON VALVE, WAIT BUTTON2 GOES HIGH");
+          LCD.clear();
+          LCD.setCursor(0, 0);
+          LCD.print("TURN ON VALVE");
           digitalWrite(VALVE, HIGH);
+        }
+        if((lastStateMachine == LOW_WATER)&&(flagValve == true))
+        {
+            Serial.println("ICE FULL");
+            LCD.clear();
+            LCD.setCursor(0, 0);
+            LCD.print("ICE FULL, REMOVE ICE");
+        }
+        if((digitalRead(BUTTON2) == LOW)&&(valveState == FULL)&&(turnOffValve != 0))
+        {
+          LCD.setCursor(0, 0);
+          LCD.print("ICE FULL, REMOVE!");
+          LCD.setCursor(0, 1);
+          LCD.print("WAIT : ");
+          if(lastTurnOffValve != turnOffValve)
+          {
+            LCD.setCursor(7, 1);
+            LCD.print("         ");
+            LCD.setCursor(7, 1);
+            LCD.print(turnOffValve);
+          }
+          lastTurnOffValve = turnOffValve;
         }
       }
       break;
