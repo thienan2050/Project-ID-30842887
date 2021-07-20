@@ -30,7 +30,7 @@
  * OFF state : turn off compressor and water pump, delay in xxx
  * PRODUCE state : ice fall and touch button2, delay 5000.
 */
-typedef enum { ON, OFF, PRODUCE, LOW_WATER } STATE;
+typedef enum { ON, OFF, PRODUCE, LOW_WATER, RECONFIG } STATE;
 typedef enum { INIT, WAIT_FALLING, FULL, ON_ALARM, COMPLETE } VALVE_STATE;
 typedef enum { RIGHT, UP, DOWN, LEFT, SELECT, NOISE } BUTTON;
 int TIMER[3] = {SMALL, MEDIUM, LARGE};
@@ -39,9 +39,9 @@ STATE StateMachine, lastStateMachine;
 VALVE_STATE valveState = INIT;
 int pause, turnOffValve, lastTurnOffValve, currentState[7], wait;
 bool flagValve = false, flagNC_SWITCH = false;
-int index = 0, lastIndex = 4;
-bool configuration = false;
-bool done = false;
+int index = 0, lastIndex = 4, added;
+bool configuration = false, reconfig = false;
+bool done = false, exception = false;
 LiquidCrystal LCD(8, 9, 4, 5, 6, 7);        // Select the pins used on the LCD panel
 
 /* Timer interrupt handler. */
@@ -169,9 +169,17 @@ void loop()
 {
     if((readKeyPad() == SELECT)&&(configuration == true))
     {
+      digitalWrite(ALARM, LOW);
       LCD.clear();
       LCD.setCursor(0, 0);
       LCD.print("RECONFIG SIZE ?");
+      currentState[0] = digitalRead(COMPRESSOR);    // Save state of compressor
+      currentState[1] = digitalRead(PUMP);          // Save state of pump
+      currentState[2] = digitalRead(VALVE);         // Save state of valve
+      currentState[3] = timerCounterDown;           // Save state of current timer
+      currentState[4] = StateMachine;           
+      currentState[5] = turnOffValve ? turnOffValve : 0;      
+      currentState[6] = digitalRead(ALARM);   
       LCD.setCursor(0, 1);
       LCD.print("SELECT TO OK");
       wait = 10;         // WAIT 10 TO RECORD A SECOND PRESS, IF TIME'S UP, RESUME
@@ -181,17 +189,33 @@ void loop()
         Serial.println("RESUME");
         LCD.clear();
         LCD.print("RESUME");
-        lastStateMachine = 10;
+        delay(100);
+        LCD.clear();
+        digitalWrite(COMPRESSOR,currentState[0]);       // Restore saved state of compressor
+        digitalWrite(PUMP,currentState[1]);             // Restore saved state of pump
+        digitalWrite(VALVE,currentState[2]);            // Restore saved state of valve
+        digitalWrite(ALARM,currentState[6]);
+        timerCounterDown = currentState[3];             // Restore saved timer
+        StateMachine = currentState[4];                 // Restore saved state machine
+        turnOffValve = currentState[5];
+        lastStateMachine = LOW_WATER;
+        exception = true;
       }
       else if(wait > 0)
       {
         LCD.clear();
-        LCD.print("RECONFIGURE");
+        LCD.print("RE-CONFIGURE !");
+        delay(1000);
+        LCD.clear();
+        LCD.print("EFFECTS NEXT TIME");
+        delay(1000);
         configuration = false;
         digitalWrite(COMPRESSOR, LOW);
         digitalWrite(VALVE, LOW);
         digitalWrite(PUMP, LOW);
         digitalWrite(VALVE, LOW);
+        lastStateMachine = LOW_WATER;
+        StateMachine = currentState[4];
         delay(20);
       }
     }
@@ -248,6 +272,20 @@ void loop()
       LCD.print("TIME = ");
       LCD.setCursor(7, 1);
       LCD.print(TIMER[index]);
+      delay(1000);
+        LCD.clear();
+        LCD.print("ICE FULL, REMOVE");
+        digitalWrite(ALARM, HIGH);
+        while(digitalRead(BUTTON2) == LOW);
+        digitalWrite(ALARM, LOW);
+        
+        LCD.clear();
+        LCD.print("LOW WATER");
+        digitalWrite(ALARM, HIGH);
+        while(digitalRead(NC_SWITCH) == HIGH);
+        digitalWrite(ALARM, LOW);
+        LCD.clear();
+      
       timerCounterDown = TIMER[index];
       StateMachine = ON;
       lastStateMachine = PRODUCE; // Dont care, just a garbage value. */
@@ -451,6 +489,18 @@ void loop()
           }
           lastTurnOffValve = turnOffValve;
         }
+        if((digitalRead(BUTTON2) == LOW)&&(valveState == ON_ALARM)&&(turnOffValve == 0)&&(exception == true))
+        {
+            Serial.println("TIME'S UP, TURN ON ALARM, TURN OFF COMPRESSOR, PUMP AND VALVE"); 
+            LCD.clear();
+            LCD.setCursor(0, 0);
+            LCD.print("ICE FULL, REMOVE!");
+            LCD.setCursor(0, 1);
+            LCD.print("TURN OFF ALL");
+            digitalWrite(ALARM, HIGH);
+            exception = false;
+        }
+        
       }
       break;
       default:break;
